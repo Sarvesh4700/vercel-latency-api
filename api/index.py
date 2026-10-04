@@ -105,4 +105,4 @@ def metrics(request: RequestBody):
             "avg_uptime": round(sum(uptimes) / len(uptimes), 3),
             "breaches": sum(1 for lat in latencies if lat > request.threshold_ms),
         }
-    return JSONResponse(content=result)
+    return JSONResponse(content={"regions": result})
