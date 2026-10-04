@@ -1,47 +1,31 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
-from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List
 import math
 
 app = FastAPI()
 
-# Standard FastAPI CORS support
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+CORS_HEADERS = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "*",
+    # Lets browser JavaScript read Access-Control-Allow-Origin on the response
+    "Access-Control-Expose-Headers": "Access-Control-Allow-Origin",
+}
 
 
-# Explicitly add CORS headers to every response.
-# This guarantees the grader sees Access-Control-Allow-Origin: *
 @app.middleware("http")
 async def cors_headers(request: Request, call_next):
-    # Handle browser preflight requests explicitly
     if request.method == "OPTIONS":
-        return Response(
-            status_code=200,
-            headers={
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-                "Access-Control-Allow-Headers": "*",
-            },
-        )
+        return Response(status_code=200, headers=CORS_HEADERS)
 
     response = await call_next(request)
-
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-    response.headers["Access-Control-Allow-Headers"] = "*"
-
+    for key, value in CORS_HEADERS.items():
+        response.headers[key] = value
     return response
 
 
-# Telemetry data
 DATA = [
     # APAC
     {"region": "apac", "latency_ms": 181.15, "uptime_pct": 97.44},
@@ -92,64 +76,33 @@ class RequestBody(BaseModel):
     threshold_ms: float
 
 
-def percentile(values, percentile):
+def percentile(values, pct):
     values = sorted(values)
-
     if not values:
         return 0.0
-
-    position = (len(values) - 1) * percentile / 100
+    position = (len(values) - 1) * pct / 100
     lower = math.floor(position)
     upper = math.ceil(position)
-
     if lower == upper:
         return values[lower]
-
-    return (
-        values[lower]
-        + (values[upper] - values[lower]) * (position - lower)
-    )
+    return values[lower] + (values[upper] - values[lower]) * (position - lower)
 
 
 @app.post("/")
 def metrics(request: RequestBody):
     result = {}
-
     for region in request.regions:
-        records = [
-            record
-            for record in DATA
-            if record["region"] == region
-        ]
-
+        records = [r for r in DATA if r["region"] == region]
         if not records:
-            result[region] = {
-                "avg_latency": 0,
-                "p95_latency": 0,
-                "avg_uptime": 0,
-                "breaches": 0,
-            }
+            result[region] = {"avg_latency": 0, "p95_latency": 0, "avg_uptime": 0, "breaches": 0}
             continue
 
-        latencies = [
-            record["latency_ms"]
-            for record in records
-        ]
-
-        uptimes = [
-            record["uptime_pct"]
-            for record in records
-        ]
-
+        latencies = [r["latency_ms"] for r in records]
+        uptimes = [r["uptime_pct"] for r in records]
         result[region] = {
-            "avg_latency": sum(latencies) / len(latencies),
-            "p95_latency": percentile(latencies, 95),
-            "avg_uptime": sum(uptimes) / len(uptimes),
-            "breaches": sum(
-                1
-                for latency in latencies
-                if latency > request.threshold_ms
-            ),
+            "avg_latency": round(sum(latencies) / len(latencies), 2),
+            "p95_latency": round(percentile(latencies, 95), 2),
+            "avg_uptime": round(sum(uptimes) / len(uptimes), 3),
+            "breaches": sum(1 for lat in latencies if lat > request.threshold_ms),
         }
-
     return JSONResponse(content=result)
